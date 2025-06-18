@@ -1,0 +1,5 @@
+{
+  "apiKey": "YOUR_LINEAR_API_KEY",
+  "issuesFilePath": "./issues.txt",
+  "defaultTeamId": "YOUR_DEFAULT_TEAM_ID"
+}
