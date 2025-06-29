@@ -9,8 +9,8 @@ import { LinearApi } from './linearApi';
 class LinearFileSync {
   private api: LinearApi;
   private config: Config;
-  private issues: Map<string, Issue> = new Map();
-  private isInitialSync = true;
+  private updateInterval: NodeJS.Timeout | null = null;
+  private isLocked = false;
 
   constructor(config: Config) {
     this.config = config;
@@ -41,95 +41,81 @@ class LinearFileSync {
     }
   }
 
-  private async handleFileChange(): Promise<void> {
-    const fileContent = await this.readIssuesFromFile();
-    const fileIssues = parseIssuesFromFile(fileContent);
-    const apiIssues = await this.fetchIssues();
-
-    // Create maps for easier lookup
-    const fileIssuesMap = new Map(fileIssues.map(i => [i.id, i]));
-    const apiIssuesMap = new Map(apiIssues.map(i => [i.id, i]));
-
-    // Find issues that exist in file but not in API (new issues)
-    const newIssues = fileIssues.filter(issue => !apiIssuesMap.has(issue.id));
-    if (newIssues.length > 0) {
-      console.log('Creating new issues:', newIssues.map(i => i.title).join(', '));
-      for (const issue of newIssues) {
-        await this.api.createIssue(issue);
-      }
-    }
-
-    // Find and update modified issues
-    for (const [id, fileIssue] of fileIssuesMap) {
-      const apiIssue = apiIssuesMap.get(id);
-      if (apiIssue && !this.areIssuesEqual(fileIssue, apiIssue)) {
-        console.log('Updating issue:', fileIssue.title);
-        await this.api.updateIssue(id, fileIssue);
-      }
+  private async checkLockFile(): Promise<boolean> {
+    try {
+      await fs.promises.access(this.config.issuesFilePath + '.lock');
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  private areIssuesEqual(a: Issue, b: Issue): boolean {
-    return a.title === b.title &&
-           a.description === b.description &&
-           a.state.id === b.state.id &&
-           (a.assignee?.id === b.assignee?.id) &&
-           (a.project?.id === b.project?.id) &&
-           this.areCommentsEqual(a.comments, b.comments);
+  private async performUpdate(): Promise<void> {
+    try {
+      console.log('Fetching issues from Linear...');
+      const issues = await this.fetchIssues();
+      await this.writeIssuesToFile(issues);
+      console.log(`Updated ${issues.length} issues`);
+    } catch (error) {
+      console.error('Error during update:', error);
+    }
   }
 
-  private areCommentsEqual(a: Array<{ id: string; body: string }>, b: Array<{ id: string; body: string }>): boolean {
-    if (a.length !== b.length) return false;
-    return a.every((comment, i) => comment.id === b[i].id && comment.body === b[i].body);
+  private async handleLockFileChange(): Promise<void> {
+    const lockExists = await this.checkLockFile();
+    
+    if (lockExists && !this.isLocked) {
+      // Lock file appeared - stop updates
+      console.log('Lock file detected, stopping updates...');
+      this.isLocked = true;
+      if (this.updateInterval) {
+        clearInterval(this.updateInterval);
+        this.updateInterval = null;
+      }
+    } else if (!lockExists && this.isLocked) {
+      // Lock file disappeared - resume updates
+      console.log('Lock file removed, resuming updates...');
+      this.isLocked = false;
+      await this.performUpdate(); // Immediate update
+      this.startUpdateCycle();
+    }
+  }
+
+  private startUpdateCycle(): void {
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+    }
+    this.updateInterval = setInterval(async () => {
+      if (!this.isLocked) {
+        await this.performUpdate();
+      }
+    }, 2 * 60 * 1000); // 2 minutes
   }
 
   public async start(): Promise<void> {
     try {
-      // Check if file exists
-      const fileExists = await fs.promises.access(this.config.issuesFilePath)
-        .then(() => true)
-        .catch(() => false);
+      // Initial update
+      await this.performUpdate();
 
-      // Fetch current issues from API
-      const apiIssues = await this.fetchIssues();
+      // Start the update cycle
+      this.startUpdateCycle();
 
-      if (fileExists) {
-        // File exists, compare with API state
-        const fileContent = await this.readIssuesFromFile();
-        const fileIssues = parseIssuesFromFile(fileContent);
-
-        const diffResult = diff.diffArrays(
-          fileIssues.map(i => formatIssuesToString([i])),
-          apiIssues.map(i => formatIssuesToString([i]))
-        );
-
-        if (diffResult.length > 1) {
-          console.error('File content differs from Linear API state:');
-          diffResult.forEach((part: diff.ArrayChange<string>) => {
-            if (part.added) {
-              console.error('Added:', part.value);
-            } else if (part.removed) {
-              console.error('Removed:', part.value);
-            }
-          });
-          process.exit(1);
-        }
-      } else {
-        // File doesn't exist, create it with API issues
-        await this.writeIssuesToFile(apiIssues);
-      }
-
-      // Start watching for changes
-      const watcher = chokidar.watch(this.config.issuesFilePath, {
+      // Watch for lock file changes
+      const lockFilePath = this.config.issuesFilePath + '.lock';
+      const watcher = chokidar.watch(lockFilePath, {
         persistent: true,
         ignoreInitial: true
       });
 
-      watcher.on('change', async () => {
-        await this.handleFileChange();
+      watcher.on('add', async () => {
+        await this.handleLockFileChange();
       });
 
-      console.log('Watching for file changes...');
+      watcher.on('unlink', async () => {
+        await this.handleLockFileChange();
+      });
+
+      console.log('Application started. Updates every 5 minutes. Watching for lock file...');
     } catch (error) {
       console.error('Error:', error);
       process.exit(1);
