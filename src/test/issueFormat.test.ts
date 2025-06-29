@@ -1,4 +1,4 @@
-import { Issue, formatIssue, parseIssuesFromFile, formatIssuesToString } from './issueFormat';
+import { Issue, formatIssue, parseIssuesFromFile, formatIssuesToString } from '../issueFormat';
 
 describe('Issue Formatting and Parsing', () => {
   const sampleIssue: Issue = {

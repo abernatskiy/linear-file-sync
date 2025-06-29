@@ -1,6 +1,6 @@
-import { LinearApi } from './linearApi';
-import { formatIssuesToString } from './issueFormat';
-import { loadConfig } from './config';
+import { LinearApi } from '../linearApi';
+import { formatIssuesToString } from '../issueFormat';
+import { loadConfig } from '../config';
 
 async function main() {
   try {
