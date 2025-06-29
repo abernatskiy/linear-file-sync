@@ -200,4 +200,17 @@ export class LinearApi {
       }
     });
   }
+
+  async updateIssueComments(issueId: string, comments: Array<{ id: string; body: string }>): Promise<void> {
+    // For now, we'll just update the issue with the new comments
+    // In a more sophisticated implementation, we might want to handle individual comment updates
+    console.log(`Updating comments for issue ${issueId}: ${comments.length} comments`);
+    
+    // Note: Linear API doesn't have a direct way to update multiple comments at once
+    // This is a simplified implementation - in practice, you might want to:
+    // 1. Fetch current comments
+    // 2. Compare with new comments
+    // 3. Add new comments, update existing ones, delete removed ones
+    // For now, we'll just log the comment changes
+  }
 } 

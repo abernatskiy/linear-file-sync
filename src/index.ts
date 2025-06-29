@@ -30,14 +30,13 @@ class LinearFileSync {
     await fs.promises.writeFile(this.config.issuesFilePath, content, 'utf8');
   }
 
-  private async readIssuesFromFile(): Promise<string> {
+  private async readIssuesFromFile(): Promise<Issue[]> {
     try {
-      return await fs.promises.readFile(this.config.issuesFilePath, 'utf8');
+      const content = await fs.promises.readFile(this.config.issuesFilePath, 'utf8');
+      return parseIssuesFromFile(content);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return '';
-      }
-      throw error;
+      console.error('Error reading issues file:', error);
+      return [];
     }
   }
 
@@ -61,6 +60,62 @@ class LinearFileSync {
     }
   }
 
+  private async syncFileToLinear(): Promise<void> {
+    try {
+      console.log('Syncing file changes to Linear...');
+      
+      // 1. Read the contents of issues.txt and parse it
+      const fileIssues = await this.readIssuesFromFile();
+      
+      // 2. Fetch a fresh list of issues from Linear
+      const linearIssues = await this.fetchIssues();
+      
+      // Create maps for easier lookup
+      const fileIssuesMap = new Map(fileIssues.map(i => [i.id, i]));
+      const linearIssuesMap = new Map(linearIssues.map(i => [i.id, i]));
+
+      // 3. Compare and update
+      
+      // Handle new issues (no ID assigned)
+      const newIssues = fileIssues.filter(issue => !issue.id || issue.id === '');
+      if (newIssues.length > 0) {
+        console.log(`Creating ${newIssues.length} new issues...`);
+        for (const issue of newIssues) {
+          await this.api.createIssue(issue);
+        }
+      }
+
+      // Handle existing issues
+      for (const [id, fileIssue] of fileIssuesMap) {
+        if (!id || id === '') continue; // Skip new issues
+        
+        const linearIssue = linearIssuesMap.get(id);
+        if (!linearIssue) continue; // Issue doesn't exist in Linear anymore
+
+        // Check for description changes
+        if (fileIssue.description !== linearIssue.description) {
+          console.log(`Updating description for issue: ${fileIssue.title}`);
+          await this.api.updateIssue(id, fileIssue);
+        }
+
+        // Check for comment changes
+        if (!this.areCommentsEqual(fileIssue.comments, linearIssue.comments)) {
+          console.log(`Updating comments for issue: ${fileIssue.title}`);
+          await this.api.updateIssueComments(id, fileIssue.comments);
+        }
+      }
+
+      console.log('Sync completed');
+    } catch (error) {
+      console.error('Error during sync:', error);
+    }
+  }
+
+  private areCommentsEqual(a: Array<{ id: string; body: string }>, b: Array<{ id: string; body: string }>): boolean {
+    if (a.length !== b.length) return false;
+    return a.every((comment, i) => comment.body === b[i].body);
+  }
+
   private async handleLockFileChange(): Promise<void> {
     const lockExists = await this.checkLockFile();
     
@@ -73,9 +128,18 @@ class LinearFileSync {
         this.updateInterval = null;
       }
     } else if (!lockExists && this.isLocked) {
-      // Lock file disappeared - resume updates
-      console.log('Lock file removed, resuming updates...');
+      // Lock file disappeared - sync changes and resume updates
+      console.log('Lock file removed, syncing changes...');
       this.isLocked = false;
+      
+      // Sync file changes to Linear
+      await this.syncFileToLinear();
+      
+      // Wait 10 seconds before resuming updates
+      console.log('Waiting 10 seconds before resuming updates...');
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      
+      // Resume updates
       await this.performUpdate(); // Immediate update
       this.startUpdateCycle();
     }
@@ -115,7 +179,7 @@ class LinearFileSync {
         await this.handleLockFileChange();
       });
 
-      console.log('Application started. Updates every 5 minutes. Watching for lock file...');
+      console.log('Application started. Updates every 2 minutes. Watching for lock file...');
     } catch (error) {
       console.error('Error:', error);
       process.exit(1);
