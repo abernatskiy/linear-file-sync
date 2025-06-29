@@ -22,8 +22,9 @@ Project: Test Project
 
 This is a test issue
 
+--------- 4
 First comment
----------
+--------- 5
 Second comment`;
 
   describe('formatIssue', () => {
@@ -65,10 +66,30 @@ This is a test issue
         assignee: { id: '', name: 'John Doe' },
         project: { id: '', name: 'Test Project' },
         comments: [
-          { id: '', body: 'First comment' },
-          { id: '', body: 'Second comment' }
+          { id: '4', body: 'First comment' },
+          { id: '5', body: 'Second comment' }
         ]
       });
+    });
+
+    it('should parse comments with empty IDs correctly', () => {
+      const issueWithEmptyCommentIds = `===== Test Issue =====
+ID: 123
+State: Todo
+
+This is a test issue
+
+---------
+New comment without ID
+--------- 5
+Existing comment with ID`;
+
+      const parsed = parseIssuesFromFile(issueWithEmptyCommentIds);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].comments).toEqual([
+        { id: '', body: 'New comment without ID' },
+        { id: '5', body: 'Existing comment with ID' }
+      ]);
     });
 
     it('should parse multiple issues correctly', () => {

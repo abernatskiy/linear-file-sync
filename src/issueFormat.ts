@@ -18,7 +18,7 @@ export function formatIssue(issue: Issue): string {
     issue.project ? `Project: ${issue.project.name}` : ''
   ].filter(Boolean).join('\n');
 
-  const comments = issue.comments.map(c => c.body).join('\n---------\n');
+  const comments = issue.comments.map(c => `--------- ${c.id}\n${c.body}`).join('\n');
   
   return `===== ${issue.title} =====\n${params}\n\n${issue.description}\n\n${comments}`;
 }
@@ -57,10 +57,22 @@ export function parseIssuesFromFile(content: string): Issue[] {
       descEnd++;
     }
     const description = lines.slice(descStart, descEnd).join('\n').trim();
-    // Comments are after descEnd+1, joined by '---------'
+    // Comments are after descEnd+1, joined by '--------- <comment-id>' or '---------\n' (empty id)
     const commentsBlock = lines.slice(descEnd + 1).join('\n');
     const comments = commentsBlock
-      ? commentsBlock.split(/\n---------\n/).filter(Boolean).map(body => ({ id: '', body: body.trim() }))
+      ? commentsBlock.split(/\n--------- ?/).filter(Boolean).map(commentBlock => {
+          const lines = commentBlock.split('\n');
+          let commentId = '';
+          let body = '';
+          if (lines.length > 1 && lines[0].trim() !== '') {
+            commentId = lines[0].replace(/^[- ]+/, '').trim();
+            body = lines.slice(1).join('\n').trim();
+          } else {
+            // No ID, treat the whole block as body
+            body = lines.join('\n').trim();
+          }
+          return { id: commentId, body };
+        })
       : [];
     issues.push({
       id: paramsObj.ID,
